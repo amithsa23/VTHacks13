@@ -1,0 +1,34 @@
+[
+  {
+    "id": 1,
+    "title": "3 bed single-family near downtown",
+    "address": "123 Main St",
+    "city": "Blacksburg",
+    "price": 320000,
+    "beds": 3,
+    "baths": 2,
+    "sqft": 1800,
+    "lat": 37.2296,
+    "lng": -80.4139,
+    "description": "Charming 3 bedroom house close to downtown Blacksburg. Hardwood floors, renovated kitchen.",
+    "images": [
+      "https://via.placeholder.com/400x300?text=Property+1"
+    ]
+  },
+  {
+    "id": 2,
+    "title": "Cozy 2 bed condo",
+    "address": "456 College Ave",
+    "city": "Blacksburg",
+    "price": 220000,
+    "beds": 2,
+    "baths": 1,
+    "sqft": 900,
+    "lat": 37.2300,
+    "lng": -80.4160,
+    "description": "Perfect starter condo. Walking distance to campus and transit.",
+    "images": [
+      "https://via.placeholder.com/400x300?text=Property+2"
+    ]
+  }
+]
