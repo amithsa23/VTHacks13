@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 
+const API = import.meta.env.DEV ? 'http://localhost:4000/api' : '/api';
+
 export default function PropertyList() {
 	const [properties, setProperties] = useState([]);
 	const [city, setCity] = useState('Blacksburg');
@@ -9,7 +11,7 @@ export default function PropertyList() {
 	const [selected, setSelected] = useState(null);
 
 	useEffect(() => {
-		fetch(`/api/properties?city=${encodeURIComponent(city)}&minPrice=${minPrice}&maxPrice=${maxPrice}&beds=${beds}`)
+		fetch(`${API}/properties?city=${encodeURIComponent(city)}&minPrice=${minPrice}&maxPrice=${maxPrice}&beds=${beds}`)
 			.then(r => r.json())
 			.then(setProperties)
 			.catch(err => console.error(err));
@@ -51,7 +53,7 @@ export default function PropertyList() {
 function PropertyDetail({ id }) {
 	const [prop, setProp] = useState(null);
 	useEffect(() => {
-		fetch(`/api/properties/${id}`).then(r => r.json()).then(setProp);
+		fetch(`${API}/properties/${id}`).then(r => r.json()).then(setProp);
 	}, [id]);
 	if (!prop) return <div>Loading...</div>;
 	return (
@@ -69,9 +71,7 @@ function SchedulePanel({ propertyId }) {
 	const [text, setText] = useState('');
 	const [result, setResult] = useState(null);
 	function submit() {
-		const form = new FormData();
-		form.append('text', text);
-		fetch('/api/schedule', { method: 'POST', body: form }).then(r => r.json()).then(setResult);
+		fetch(`${API}/schedule`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, propertyId }) }).then(r => r.json()).then(setResult);
 	}
 	return (
 		<div style={{ marginTop: 12 }}>

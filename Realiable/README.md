@@ -1,3 +1,30 @@
+# Realiable
+
+Local dev notes
+
+1) Server
+
+  cd server
+  npm install
+  # copy server/.env.example -> server/.env and fill in keys (do NOT commit .env)
+  # Example (Windows cmd):
+  # set GOOGLE_MAPS_API_KEY=your_key_here
+  # set GEMINI_PROVIDER=google
+  # set GEMINI_API_KEY=your_key_here
+  npm run dev
+
+2) Client
+
+  cd client
+  npm install --legacy-peer-deps
+  npm run dev
+
+Open the client dev URL printed by Vite (e.g., http://localhost:5174) and the client will call the server at http://localhost:4000/api.
+
+Gemini / PaLM notes
+
+- To enable live LLM responses, set `GEMINI_PROVIDER=google`, `GEMINI_API_KEY` and `GEMINI_MODEL` in `server/.env` or the environment.
+- The server will call the Google Generative Language REST endpoint. If you prefer service-account authentication, I can update the server to use OAuth tokens.
 Realiable - Roadmap and Setup
 
 Overview

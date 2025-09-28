@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
 
+const API = import.meta.env.DEV ? 'http://localhost:4000/api' : '/api';
+
 export default function PropertyChat({ propertyId }) {
 	const [text, setText] = useState('');
 	const [messages, setMessages] = useState([]);
 
 	async function send() {
-		const form = new FormData();
-		form.append('text', text);
-		const res = await fetch('/api/schedule', { method: 'POST', body: form });
+		const res = await fetch(`${API}/schedule`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, propertyId }) });
 		const json = await res.json();
 		setMessages(m => [...m, { from: 'user', text }, { from: 'agent', text: JSON.stringify(json.analysis, null, 2) }]);
 		setText('');

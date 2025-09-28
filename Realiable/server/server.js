@@ -1,8 +1,19 @@
 const express = require('express');
 const cors = require('cors');
-const path = require('path');
 const api = require('./routes/api');
-require('dotenv').config();
+// Load .env from server folder first, then fall back to repository root (so users can place .env at project root)
+const dotenv = require('dotenv');
+const fs = require('fs');
+const path = require('path');
+const serverEnv = path.join(__dirname, '.env');
+const projectEnv = path.join(__dirname, '..', '.env');
+if (fs.existsSync(serverEnv)) {
+	dotenv.config({ path: serverEnv });
+} else if (fs.existsSync(projectEnv)) {
+	dotenv.config({ path: projectEnv });
+} else {
+	dotenv.config();
+}
 
 const app = express();
 app.use(cors());
