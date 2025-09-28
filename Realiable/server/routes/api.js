@@ -2,11 +2,41 @@ const express = require('express');
 const router = express.Router();
 const path = require('path');
 const fs = require('fs');
-const https = require('https');
 const multer = require('multer');
 const axios = require('axios');
 
 const upload = multer({ dest: path.join(__dirname, '..', 'uploads') });
+
+// Helper: escape text for use inside XML/SVG
+function escapeXml(unsafe) {
+  if (!unsafe) return '';
+  return String(unsafe).replace(/[&<>\"']/g, function (c) {
+    switch (c) {
+      case '&': return '&amp;';
+      case '<': return '&lt;';
+      case '>': return '&gt;';
+      case '"': return '&quot;';
+      case "'": return '&apos;';
+    }
+  });
+}
+
+// Helper: find the first balanced JSON object string in text
+function extractJSON(text) {
+  if (!text || typeof text !== 'string') return null;
+  const start = text.indexOf('{');
+  if (start === -1) return null;
+  let depth = 0;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '{') depth++;
+    else if (ch === '}') depth--;
+    if (depth === 0) {
+      return text.slice(start, i + 1);
+    }
+  }
+  return null;
+}
 
 function readProperties() {
   const file = path.join(__dirname, '..', 'data', 'properties.json');
@@ -49,25 +79,24 @@ router.get('/map/:id', (req, res) => {
   const props = readProperties();
   const prop = props.find(p => String(p.id) === String(req.params.id));
   if (!prop) return res.status(404).send('Not found');
-  const key = process.env.GOOGLE_MAPS_API_KEY;
-  if (!key) return res.status(500).send('Server missing GOOGLE_MAPS_API_KEY in environment');
-
-  // Prefer lat/lng if available because they are more reliable for map images
-  const center = (prop.lat && prop.lng) ? `${prop.lat},${prop.lng}` : encodeURIComponent(prop.address + ', ' + prop.city);
-  const zoom = req.query.zoom || 16;
-  const size = req.query.size || '640x320';
-  const markers = (prop.lat && prop.lng) ? `${prop.lat},${prop.lng}` : encodeURIComponent(prop.address + ', ' + prop.city);
-  const mapsUrl = `https://maps.googleapis.com/maps/api/staticmap?center=${center}&zoom=${zoom}&size=${size}&markers=color:red%7C${markers}&key=${key}`;
-
-  https.get(mapsUrl, (mapsRes) => {
-    const contentType = mapsRes.headers['content-type'] || 'image/png';
-    res.setHeader('Content-Type', contentType);
-    // Stream the image response to the client
-    mapsRes.pipe(res);
-  }).on('error', (err) => {
-    console.error('Error proxying map image', err);
-    res.status(500).send('Failed to fetch map image');
-  });
+  // No Google Maps API key required: return a simple SVG placeholder image with the address.
+  const w = 640;
+  const h = 320;
+  const address = (prop.address ? `${prop.address}, ` : '') + (prop.city || '');
+  const label = `${prop.title || 'Property'}\n${address}`;
+  const svg = `<?xml version="1.0" encoding="UTF-8"?>
+  <svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+    <rect width="100%" height="100%" fill="#e8eef6" />
+    <g transform="translate(20,40)">
+      <rect x="0" y="0" width="${w-40}" height="${h-80}" rx="12" ry="12" fill="#ffffff" stroke="#cbd6e6"/>
+      <text x="20" y="40" font-family="Arial, Helvetica, sans-serif" font-size="20" fill="#1f3b73">${escapeXml(prop.title || 'Property')}</text>
+      <text x="20" y="70" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#23365b">${escapeXml(address)}</text>
+      <circle cx="${w-120}" cy="${h/2 - 10}" r="18" fill="#ff6b6b" />
+      <text x="${w-120}" y="${h/2 - 6}" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#fff" text-anchor="middle">📍</text>
+    </g>
+  </svg>`;
+  res.setHeader('Content-Type', 'image/svg+xml');
+  res.send(svg);
 });
 
 // POST /api/schedule - accept a timetable text or file and return a mock analysis
@@ -83,30 +112,28 @@ router.post('/schedule', upload.single('file'), async (req, res) => {
     }
   }
   const schedule = text || fileText || '';
-  // If Gemini endpoint & key are configured, call it with property context + user schedule
+  // If a Gemini API key is configured, call the LLM with property context + user schedule.
+  // For the Google provider (PaLM) we only need GEMINI_API_KEY + GEMINI_PROVIDER=google.
+  // For generic remote endpoints, GEMINI_API_ENDPOINT must also be set.
   const geminiEndpoint = process.env.GEMINI_API_ENDPOINT;
   const geminiKey = process.env.GEMINI_API_KEY;
-  if (geminiEndpoint && geminiKey) {
+  if (geminiKey) {
     try {
-      // Build a prompt/payload for the LLM. Adjust to match your provider's API schema.
       const props = readProperties();
       const property = props.find(p => String(p.id) === String(propertyId)) || null;
       const provider = (process.env.GEMINI_PROVIDER || '').toLowerCase();
+      const model = process.env.GEMINI_MODEL || process.env.GEMINI_MODEL_NAME || 'text-bison-001';
+      const prompt = `You are given a property and a user's weekly schedule. Return ONLY a single valid JSON object (no surrounding text) following this exact schema:\n{\n  "fitsSchedule": boolean,\n  "travelEstimates": { "driveMinutes": number, "transitMinutes": number, "walkMinutes": number },\n  "nearby": { "groceries": [ { "name": string, "distanceMiles": number } ], "schools": [ { "name": string, "distanceMiles": number } ] },\n  "note": string\n}\n\nInputs:\nProperty: ${property ? JSON.stringify(property) : 'N/A'}\nUser schedule:\n${schedule}\n\nGuidance:\n- If the property has lat/lng, estimate straight-line distances to POIs and convert to estimated travel minutes using reasonable local assumptions (driving ~30 mph, transit depends on local schedules — estimate conservatively, walking ~3 mph).\n- If the schedule includes addresses or named places, use them as destinations to estimate commute times; otherwise, provide reasonable local estimates to common amenities.\n- Keep numeric distances in miles (one decimal) and travelMinutes as whole numbers.\n- Do not include any additional fields or explanatory text. If uncertain, return conservative estimates and put uncertainties in the note field.`;
 
+      let raw = null;
       if (provider === 'google') {
-        // Google Generative Language (PaLM) REST API
-        // Requires GEMINI_API_KEY and GEMINI_MODEL environment variables.
-        const model = process.env.GEMINI_MODEL || process.env.GEMINI_MODEL_NAME || 'text-bison-001';
-        const prompt = `Property: ${property ? JSON.stringify(property) : 'N/A'}\nUser schedule:\n${schedule}\n\nReturn a JSON object with keys: fitsSchedule (true/false), travelEstimates, nearby, note.`;
         const googleUrl = `https://generativelanguage.googleapis.com/v1beta2/models/${model}:generate?key=${encodeURIComponent(geminiKey)}`;
         const body = { prompt: { text: prompt }, temperature: 0.2 };
         const resp = await axios.post(googleUrl, body, { timeout: 20000 });
-        // Parse candidates: resp.data.candidates[0].output or resp.data.candidates[0].content
-        let raw = null;
         try {
           if (resp.data && resp.data.candidates && resp.data.candidates.length > 0) {
-            raw = resp.data.candidates[0].output || resp.data.candidates[0].content && resp.data.candidates[0].content.map(c=>c.text).join('\n') || resp.data.candidates[0].text;
-          } else if (resp.data && resp.data["output"] ) {
+            raw = resp.data.candidates[0].output || (resp.data.candidates[0].content && resp.data.candidates[0].content.map(c => c.text).join('\n')) || resp.data.candidates[0].text;
+          } else if (resp.data && resp.data.output) {
             raw = resp.data.output;
           } else {
             raw = JSON.stringify(resp.data);
@@ -114,28 +141,26 @@ router.post('/schedule', upload.single('file'), async (req, res) => {
         } catch (e) {
           raw = JSON.stringify(resp.data || {});
         }
-        // If the model returned JSON text, try to parse it; otherwise return as note
-        let analysis = null;
-        try {
-          analysis = JSON.parse(raw);
-        } catch (e) {
-          analysis = { note: String(raw) };
-        }
-        return res.json({ scheduleProvided: schedule.length > 0, analysis });
       } else {
         // Generic remote endpoint integration
-        const payload = {
-          input: `Property: ${property ? JSON.stringify(property) : 'N/A'}\nUser schedule:\n${schedule}\n\nProvide a JSON analysis with keys: fitsSchedule (bool), travelEstimates, nearby, note.`,
-        };
-        const headers = {
-          'Authorization': `Bearer ${geminiKey}`,
-          'Content-Type': 'application/json'
-        };
+        if (!geminiEndpoint) {
+          console.warn('GEMINI_API_ENDPOINT not set but GEMINI_API_KEY is present; generic provider requires GEMINI_API_ENDPOINT.');
+          throw new Error('GEMINI_API_ENDPOINT required for generic provider');
+        }
+        const payload = { input: prompt };
+        const headers = { 'Authorization': `Bearer ${geminiKey}`, 'Content-Type': 'application/json' };
         const resp = await axios.post(geminiEndpoint, payload, { headers, timeout: 20000 });
-        // Expect the LLM to return a JSON-like analysis in resp.data; adapt as needed.
-        const analysis = resp.data || { note: 'Gemini returned no data' };
-        return res.json({ scheduleProvided: schedule.length > 0, analysis });
+        raw = (typeof resp.data === 'string') ? resp.data : JSON.stringify(resp.data);
       }
+
+      const extracted = extractJSON(raw);
+      let analysis = null;
+      if (extracted) {
+        try { analysis = JSON.parse(extracted); } catch (e) { analysis = { note: String(raw) }; }
+      } else {
+        try { analysis = JSON.parse(raw); } catch (e) { analysis = { note: String(raw) }; }
+      }
+      return res.json({ scheduleProvided: schedule.length > 0, analysis });
     } catch (err) {
       console.error('Error calling Gemini endpoint', err && err.message);
       // fall back to mock
